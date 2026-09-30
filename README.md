@@ -11,12 +11,12 @@ Cek: `java -version` harus menampilkan versi 17 atau lebih baru.
 ```
 git clone <URL_REPO>
 cd soka-drrha-cloudsim
-run.bat
+run.bat        (di PowerShell: .\run.bat)
 ```
 Run pertama mengunduh dependency (1-2 menit, tampak diam). Run berikutnya cepat.
 
-## Hasil yang benar (smoke test)
-Muncul tabel 4 cloudlet berstatus SUCCESS dan tulisan `>>> ENVIRONMENT OK <<<`.
+## Hasil yang benar (Step 2)
+Muncul daftar penempatan 8 VM ke 4 Host, `VM gagal dibuat : 0`, dan `Cloudlet selesai: 20 / 20`.
 
 ## Kalau error
 Kirim ke admin: (1) output `java -version`, (2) **seluruh** teks terminal (copy-paste, bukan screenshot sebagian).

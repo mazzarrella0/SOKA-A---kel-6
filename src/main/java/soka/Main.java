@@ -6,85 +6,63 @@ import org.cloudsimplus.builders.tables.CloudletsTableBuilder;
 import org.cloudsimplus.cloudlets.Cloudlet;
 import org.cloudsimplus.cloudlets.CloudletSimple;
 import org.cloudsimplus.core.CloudSimPlus;
-import org.cloudsimplus.datacenters.DatacenterSimple;
-import org.cloudsimplus.hosts.Host;
-import org.cloudsimplus.hosts.HostSimple;
-import org.cloudsimplus.resources.Pe;
-import org.cloudsimplus.resources.PeSimple;
+import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
 import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
 import org.cloudsimplus.vms.Vm;
-import org.cloudsimplus.vms.VmSimple;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Properties;
+import java.util.Random;
 
 /**
- * SMOKE TEST: hanya memastikan environment (JDK, Maven, CloudSim Plus,
- * config.properties) sudah benar di laptop ini. Nanti diganti dengan
- * orkestrasi simulasi DRRHA yang sebenarnya.
+ * STEP 2 (checkpoint): infrastruktur lengkap + 20 cloudlet dummy.
+ * Belum ada DRRHA; scheduling masih bawaan broker. Tujuannya hanya
+ * memastikan 4 Host dan 8 VM terbentuk dan semua VM berhasil ditempatkan.
  */
 public class Main {
 
+    private static final int DUMMY_CLOUDLETS = 20;
+
+    /**
+     * Porsi RAM dan BW VM yang dipakai TIAP cloudlet. Kalau 100% (default UtilizationModelFull),
+     * cloudlet ke-2 di VM yang sama tidak kebagian RAM/BW dan tidak pernah jalan.
+     * Ini realisasi constraint RAM di proposal (sum RAM cloudlet <= RAM VM).
+     */
+    private static final double RAM_BW_FRACTION = 0.05;
+
     public static void main(String[] args) throws IOException {
+        Config cfg = new Config();
         System.out.println("Java versi: " + System.getProperty("java.version"));
 
-        Properties config = loadConfig();
-        System.out.println("Config terbaca. task.counts = " + config.getProperty("task.counts"));
-
         CloudSimPlus simulation = new CloudSimPlus();
-
-        // 1 Host: 8 PE x 1000 MIPS
-        List<Pe> peList = new ArrayList<>();
-        for (int i = 0; i < 8; i++) {
-            peList.add(new PeSimple(1000));
-        }
-        Host host = new HostSimple(8192, 10_000, 1_000_000, peList);
-        new DatacenterSimple(simulation, List.of(host));
+        InfraBuilder infra = new InfraBuilder(cfg);
+        infra.buildDatacenter(simulation);
 
         DatacenterBroker broker = new DatacenterBrokerSimple(simulation);
+        List<Vm> vms = infra.buildVms();
+        broker.submitVmList(vms);
 
-        // 2 VM: 4 PE x 1000 MIPS
-        List<Vm> vms = new ArrayList<>();
-        for (int i = 0; i < 2; i++) {
-            Vm vm = new VmSimple(1000, 4);
-            vm.setRam(512).setBw(1000).setSize(10_000);
-            vms.add(vm);
-        }
-
-        // 4 Cloudlet: 10.000 MI, 2 PE
+        Random rnd = new Random(cfg.getLong("random.seed"));
         List<Cloudlet> cloudlets = new ArrayList<>();
-        for (int i = 0; i < 4; i++) {
-            Cloudlet c = new CloudletSimple(10_000, 2, new UtilizationModelFull());
+        for (int i = 0; i < DUMMY_CLOUDLETS; i++) {
+            long lengthMi = 5_000 + rnd.nextInt(45_000);
+            Cloudlet c = new CloudletSimple(lengthMi, 1, new UtilizationModelFull());
+            c.setUtilizationModelRam(new UtilizationModelDynamic(RAM_BW_FRACTION));
+            c.setUtilizationModelBw(new UtilizationModelDynamic(RAM_BW_FRACTION));
             c.setSizes(1024);
             cloudlets.add(c);
         }
-
-        broker.submitVmList(vms);
         broker.submitCloudletList(cloudlets);
 
         simulation.start();
 
-        List<Cloudlet> finished = broker.getCloudletFinishedList();
-        new CloudletsTableBuilder(finished).build();
+        infra.printPlacement(vms);
+        System.out.println("\nVM gagal dibuat : " + broker.getVmFailedList().size());
+        int done = broker.getCloudletFinishedList().size();
+        System.out.println("Cloudlet selesai: " + done + " / " + DUMMY_CLOUDLETS
+                + (done == DUMMY_CLOUDLETS ? "  -> OK" : "  -> PERINGATAN: ada cloudlet yang tidak selesai"));
 
-        long ok = finished.stream().filter(Cloudlet::isFinished).count();
-        System.out.printf("%nSMOKE TEST: %d/%d cloudlet selesai%n", ok, cloudlets.size());
-        System.out.println(ok == cloudlets.size()
-                ? ">>> ENVIRONMENT OK <<<"
-                : ">>> ADA MASALAH, kirim log lengkap ke admin <<<");
-    }
-
-    private static Properties loadConfig() throws IOException {
-        Properties p = new Properties();
-        try (InputStream in = Main.class.getResourceAsStream("/config.properties")) {
-            if (in == null) {
-                throw new IOException("config.properties tidak ditemukan di classpath");
-            }
-            p.load(in);
-        }
-        return p;
+        new CloudletsTableBuilder(broker.getCloudletFinishedList()).build();
     }
 }

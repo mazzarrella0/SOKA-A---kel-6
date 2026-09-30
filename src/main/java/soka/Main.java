@@ -3,11 +3,14 @@ package soka;
 import org.cloudsimplus.builders.tables.CloudletsTableBuilder;
 import org.cloudsimplus.cloudlets.Cloudlet;
 import org.cloudsimplus.core.CloudSimPlus;
+import org.cloudsimplus.datacenters.Datacenter;
+import org.cloudsimplus.hosts.Host;
 import org.cloudsimplus.vms.Vm;
 import soka.algorithm.DatacenterBrokerDRRHA;
 import soka.config.DatacenterFactory;
 import soka.config.VmFactory;
 import soka.dataset.GoCJDatasetReader;
+import soka.metrics.MultiObjectiveEvaluator;
 import soka.metrics.ResultReporter;
 
 import java.io.ByteArrayInputStream;
@@ -24,7 +27,7 @@ public class Main {
 
     public static void main(String[] args) throws Exception {
         CloudSimPlus simulation = new CloudSimPlus();
-        new DatacenterFactory().create(simulation);
+        Datacenter datacenter = new DatacenterFactory().create(simulation);
 
         List<Vm> vms = new VmFactory().createAll();
         DatacenterBrokerDRRHA broker = new DatacenterBrokerDRRHA(simulation);
@@ -34,10 +37,22 @@ public class Main {
         simulation.start();
         List<Cloudlet> finishedCloudlets = broker.getCloudletFinishedList();
         new CloudletsTableBuilder(finishedCloudlets).build();
-        new ResultReporter().writeCloudletsCsv(
-            finishedCloudlets,
+        List<Host> hosts = datacenter.getHostList();
+        MultiObjectiveEvaluator evaluator = new MultiObjectiveEvaluator();
+        MultiObjectiveEvaluator.Evaluation evaluation = evaluator.evaluate(
+            finishedCloudlets, hosts, 0.4, 0.3, 0.3);
+
+        ResultReporter reporter = new ResultReporter();
+        reporter.writeCloudletsCsv(finishedCloudlets,
             Paths.get("target", "results", "drrha-results.csv"));
+        reporter.writeEvaluationCsv(evaluation,
+            Paths.get("target", "results", "drrha-metrics.csv"));
+        System.out.printf(java.util.Locale.US,
+            "Metrics: makespan=%.3f s, energy=%.3f Wh, utilization=%.3f, score=%.3f%n",
+            evaluation.getMakespan(), evaluation.getEnergyWh(),
+            evaluation.getUtilization(), evaluation.getWeightedScore());
         System.out.println("CSV result: target/results/drrha-results.csv");
+        System.out.println("CSV metrics: target/results/drrha-metrics.csv");
     }
 
     private static List<Cloudlet> readWorkload() throws Exception {

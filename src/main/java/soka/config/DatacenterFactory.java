@@ -8,6 +8,7 @@ import org.cloudsimplus.hosts.Host;
 import org.cloudsimplus.hosts.HostSimple;
 import org.cloudsimplus.resources.Pe;
 import org.cloudsimplus.resources.PeSimple;
+import org.cloudsimplus.power.models.PowerModelHostSimple;
 import org.cloudsimplus.schedulers.vm.VmSchedulerTimeShared;
 
 import java.util.ArrayList;
@@ -31,6 +32,8 @@ public class DatacenterFactory {
 		}
 		Host host = new HostSimple(ram, bandwidth, storage, peList);
 		host.setVmScheduler(new VmSchedulerTimeShared());
+		host.setPowerModel(new PowerModelHostSimple(250, 150));
+		host.setStateHistoryEnabled(true);
 		return host;
 	}
 }

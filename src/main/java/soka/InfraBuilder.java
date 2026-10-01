@@ -5,8 +5,10 @@ import org.cloudsimplus.datacenters.Datacenter;
 import org.cloudsimplus.datacenters.DatacenterSimple;
 import org.cloudsimplus.hosts.Host;
 import org.cloudsimplus.hosts.HostSimple;
+import org.cloudsimplus.power.models.PowerModelHostSimple;
 import org.cloudsimplus.resources.Pe;
 import org.cloudsimplus.resources.PeSimple;
+import org.cloudsimplus.schedulers.vm.VmSchedulerTimeShared;
 import org.cloudsimplus.vms.Vm;
 import org.cloudsimplus.vms.VmSimple;
 
@@ -18,6 +20,11 @@ import java.util.Map;
 /**
  * Membangun infrastruktur sesuai Draft Design (Bagian 2):
  * 1 Datacenter, 4 Host heterogen, 8 VM (rendah / menengah / tinggi).
+ *
+ * UPDATE (integrasi DRRHA): tiap Host sekarang punya PowerModelHostSimple
+ * dan state history diaktifkan, supaya Objective 2 (Energy Consumption) dan
+ * metrik Resource Utilization (Bagian 3 & 4 draft) bisa dihitung oleh
+ * MultiObjectiveEvaluator setelah simulasi selesai.
  */
 public final class InfraBuilder {
 
@@ -25,11 +32,20 @@ public final class InfraBuilder {
     public static final String VMM = "Xen";
     public static final String OS = "Linux";
 
+    /**
+     * ASUMSI DESAIN (daya Host, tidak disebutkan di draft): dipakai sama untuk
+     * keempat Host supaya energi semata-mata merefleksikan BEBAN (hasil
+     * keputusan scheduling), bukan perbedaan efisiensi fisik antar Host.
+     * maxPower = daya saat utilisasi 100%, staticPower = daya idle (0% utilisasi).
+     */
+    private static final double HOST_MAX_POWER_WATT = 250.0;
+    private static final double HOST_STATIC_POWER_WATT = 150.0;
+
     private record HostSpec(int pes, long ramMb, long storageMb, long bwMbps) {}
 
     private record VmSpec(String name, double mipsPerPe, int pes, long ramMb) {}
 
-    // Draft 2.2 (RAM/storage dalam MB, BW dalam Mbps; 1 Gbps = 1000 Mbps)
+    // Draft 2.2 (RAM/storage dalam MB, BW dalam Mbps; 1 Gbps = 1000 Mbps -- SESUAI DRAFT)
     private static final List<HostSpec> HOSTS = List.of(
             new HostSpec(4, 8 * 1024, 500_000, 1000),     // Host 1
             new HostSpec(8, 16 * 1024, 1_000_000, 1000),  // Host 2
@@ -71,9 +87,15 @@ public final class InfraBuilder {
             for (int i = 0; i < s.pes(); i++) {
                 pes.add(new PeSimple(hostPeMips));
             }
-            hosts.add(new HostSimple(s.ramMb(), s.bwMbps(), s.storageMb(), pes));
+            Host host = new HostSimple(s.ramMb(), s.bwMbps(), s.storageMb(), pes);
+            host.setVmScheduler(new VmSchedulerTimeShared());
+            host.setPowerModel(new PowerModelHostSimple(HOST_MAX_POWER_WATT, HOST_STATIC_POWER_WATT));
+            host.setStateHistoryEnabled(true); // dibutuhkan evaluator utk energi & utilisasi
+            hosts.add(host);
         }
-        return new DatacenterSimple(simulation, hosts);
+        // schedulingInterval mengontrol seberapa sering CloudSim Plus mencatat state Host
+        // (dipakai evaluator utk menghitung energi & utilisasi secara numerik/trapesium).
+        return new DatacenterSimple(simulation, hosts).setSchedulingInterval(1.0);
     }
 
     /** VM dibuat urut TINGGI -> MENENGAH -> RENDAH supaya penempatan tidak terfragmentasi. */
@@ -89,6 +111,7 @@ public final class InfraBuilder {
         for (int i = 0; i < count; i++) {
             Vm vm = new VmSimple(spec.mipsPerPe(), spec.pes());
             vm.setRam(spec.ramMb()).setBw(VM_BW_MBPS).setSize(VM_STORAGE_MB);
+            vm.setCloudletScheduler(new soka.algorithm.CloudletSchedulerDRRHA());
             categoryOf.put(vm, spec.name());
             vm.addOnHostAllocationListener(info -> {
                 long id = info.getHost().getId();

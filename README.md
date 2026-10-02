@@ -171,6 +171,13 @@ Makespan menunjukkan waktu simulasi sampai task terakhir selesai. Energy consump
 
 Weighted-sum score menggabungkan makespan, energi, dan penalti utilisasi rendah menggunakan bobot `0.4`, `0.3`, dan `0.3`. Nilai ini sebaiknya digunakan untuk membandingkan beberapa algoritma dengan reference normalisasi yang sama; nilainya tidak cukup untuk menyimpulkan kualitas DRRHA jika hanya melihat satu kali percobaan.
 
+## Screenshot
+
+<img width="1499" height="595" alt="Screenshot 2026-10-02 103311" src="https://github.com/user-attachments/assets/248ccaaa-ed3f-4bb9-bd38-22400d98b278" />
+
+<img width="1337" height="158" alt="Screenshot 2026-10-02 103600" src="https://github.com/user-attachments/assets/ca427810-59a3-4929-8acb-82dfe6a5440c" />
+
+
 ## Referensi
 
 1. Abraham, O. L., Ngadi, M. A. B., Sharif, J. B. M., & Sidik, M. K. M. (2025). *Multi-Objective Optimization Techniques in Cloud Task Scheduling: A Systematic Literature Review*. IEEE Access, 13, 12255–12291.

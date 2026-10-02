@@ -6,7 +6,7 @@
 | 2   | Raihan Fahri Ghazali            | 5027241061 |
 | 3   | Ahmad Yafi Ar Rizq              | 5027241166 |
 | 2   | Aslam Ahmad Usman               | 5027241074 |
-| 3   | Az Zahrra Tasya                 | 5027241187 |
+| 3   | Az Zahrra Tasya                 | 5027241087 |
 
 ## Deskripsi
 

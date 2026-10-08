@@ -61,8 +61,10 @@ Terdapat delapan VM yang dibagi menjadi tiga kelompok kapasitas. Semua VM menggu
 
 | Parameter | Nilai |
 |---|---|
-| Dataset default | `GoCJ_Dataset_1000.txt` |
-| Dataset alternatif | `GoCJ_Dataset_500.txt` |
+| Dataset yang dijalankan | 100, 200, ..., 1000, 2000, dan 3000 task |
+| Pengulangan per dataset | 2 kali; objective tiap pengulangan diverifikasi identik |
+| Dataset >1000 | Dibangkitkan deterministik dengan seed 42 |
+| Kategori task pendek/panjang | Pendek: panjang <= median dataset; panjang: panjang > median |
 | PE setiap Cloudlet | 1 |
 | Quantum DRRHA | `(Mean / 2) + ((Mean / 2) / RBT)` |
 | Urutan task | Remaining length terkecil terlebih dahulu |
@@ -83,6 +85,7 @@ Simulasi menghasilkan beberapa metrik utama:
 - **Energy Consumption**: perkiraan energi yang digunakan Host selama simulasi.
 - **Resource Utilization**: tingkat pemanfaatan CPU Host.
 - **Weighted-sum Score**: nilai gabungan dari makespan, energi, dan utilisasi.
+- **Task pendek/panjang**: jumlah serta persentase task dihitung terhadap median panjang task pada dataset yang sama.
 
 Selain itu, informasi setiap Cloudlet juga disimpan, seperti status, VM yang digunakan, waktu mulai, waktu selesai, dan waktu eksekusi.
 
@@ -111,8 +114,8 @@ src/main/resource/
 
 ## Persyaratan
 
-- Java 11 atau versi yang lebih baru
-- CloudSim Plus 8.5.4
+- Java 17 atau versi yang lebih baru
+- CloudSim Plus 8.5.7
 - Maven, jika ingin menggunakan proses build Maven
 
 ## Menjalankan Simulasi
@@ -131,11 +134,21 @@ Run pertama mengunduh dependency (1-2 menit, tampak diam). Run berikutnya cepat.
 Hasil simulasi disimpan di folder berikut:
 
 ```text
-target/results/drrha-results.csv
-target/results/drrha-metrics.csv
+results/drrha-<jumlah-task>-cloudlets.csv
+results/drrha-<jumlah-task>-metrics.csv
 ```
 
-File `drrha-results.csv` berisi hasil setiap Cloudlet, sedangkan `drrha-metrics.csv` berisi metrik agregat simulasi.
+File cloudlets berisi hasil tiap task. File metrics menyimpan objective agregat, median panjang task, serta jumlah dan persentase task pendek/panjang.
+
+Konfigurasi `task.counts` dan `simulation.repeat.count` di `src/main/resources/config.properties` mengatur ukuran dataset dan jumlah pengulangan. Program membandingkan makespan, energi, utilisasi, jumlah task, pelanggaran SLA, dan objective score antarrun; perbedaan akan menghentikan proses dengan pesan error.
+
+Dataset `GoCJ_Dataset_2000.txt` dan `GoCJ_Dataset_3000.txt` bisa dibuat dari root project dengan:
+
+```powershell
+.\mvnw.cmd -q compile exec:java "-Dexec.mainClass=soka.tools.GenerateGoCJDataset" "-Dexec.args=2000 3000"
+```
+
+Generator menggunakan seed tetap per ukuran dataset, sehingga hasil dataset yang sama tetap identik saat dibuat ulang.
 
 ### Contoh Output Cloudlet
 
@@ -162,10 +175,10 @@ Contoh metrik agregat dari dataset 1000 task:
 
 | Metrik | Nilai |
 |---|---:|
-| Makespan | 15894.680 detik |
-| Energy consumption | 3007.404 Wh |
-| Resource utilization | 20.297% |
-| Weighted-sum score | 0.939109 |
+| Makespan | 18258.386 detik |
+| Energy consumption | 3450.102 Wh |
+| Resource utilization | 20.072% |
+| Weighted-sum score | 0.939784 |
 
 Makespan menunjukkan waktu simulasi sampai task terakhir selesai. Energy consumption dihitung dari power model Host, sedangkan resource utilization menunjukkan rata-rata pemakaian CPU Host selama simulasi. Nilai utilisasi yang relatif rendah menunjukkan bahwa kapasitas resource yang tersedia lebih besar daripada beban rata-rata workload pada percobaan ini.
 
@@ -183,4 +196,3 @@ Weighted-sum score menggabungkan makespan, energi, dan penalti utilisasi rendah 
 1. Abraham, O. L., Ngadi, M. A. B., Sharif, J. B. M., & Sidik, M. K. M. (2025). *Multi-Objective Optimization Techniques in Cloud Task Scheduling: A Systematic Literature Review*. IEEE Access, 13, 12255–12291.
 2. Awad, W. K., Zainol Ariffin, K. A., Ahmad Nazri, M. Z., & Yassen, E. T. (2025). *Resource Allocation Strategies and Task Scheduling Algorithms for Cloud Computing: A Systematic Literature Review*. Journal of Intelligent Systems, 34(1).
 3. Houssein, E. H., Gad, A. G., Wazery, Y. M., & Suganthan, P. N. (2021). *Task Scheduling in Cloud Computing based on Meta-heuristics: Review, Taxonomy, Open Challenges, and Future Trends*. Swarm and Evolutionary Computation, 62, 100841.
-

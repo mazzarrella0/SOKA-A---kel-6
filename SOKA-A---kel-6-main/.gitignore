@@ -1,0 +1,8 @@
+target/
+bin/
+.idea/
+*.iml
+.vscode/
+# hasil run lokal tidak di-commit, kecuali hasil final yang sengaja dipilih
+results/*
+!results/.gitkeep

@@ -3,6 +3,7 @@ package soka.metrics;
 import org.cloudsimplus.cloudlets.Cloudlet;
 import org.cloudsimplus.hosts.Host;
 import org.cloudsimplus.hosts.HostStateHistoryEntry;
+import org.cloudsimplus.resources.Pe;
 import org.cloudsimplus.vms.Vm;
 
 import java.util.HashMap;
@@ -10,35 +11,60 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Menghitung kelima metrik Bagian 4 draft + fungsi objektif gabungan
- * (Bagian 3.4): F = w1*M + w2*E + w3*(1-U).
+ * Evaluator metrik multi-objective untuk DRRHA.
  *
- * ASUMSI DESAIN -- SLA deadline (Bagian 5, constraint 4): draft tidak
- * memberi nilai deadline eksplisit per task, jadi deadline dihitung sebagai
- * kelipatan dari waktu eksekusi ideal task tsb pada VM yang menjalankannya:
- *     idealTime = length_MI / vm.getMips()      (asumsi 1 PE per cloudlet)
- *     deadline  = SLA_FACTOR * idealTime
- * SLA_FACTOR = 3.0 artinya task dianggar wajar kalau selesai dalam waktu
- * <= 3x waktu eksekusi ideal; makin besar nilainya makin longgar. Ini
- * parameter eksperimen, boleh diubah sesuai kesepakatan tim.
+ * Formula objective yang dipakai adalah:
+ *   F = w1 * M + w2 * E + w3 * (1 - U)
+ * dengan M, E, dan U dinormalisasi terhadap baseline kuantitatif yang dibangun dari total
+ * panjang task dan kapasitas komputasi yang tersedia pada infrastruktur yang sama.
  */
 public class MultiObjectiveEvaluator {
 
     private static final double SLA_FACTOR = 3.0;
+    public record SlaAssessment(double idealExecutionTime, double deadline, double completionTime,
+                                double lateness, boolean violation, String reason) {}
 
-    public Evaluation evaluate(List<Cloudlet> cloudlets, List<? extends Host> hosts,
-                                double weightMakespan, double weightEnergy,
-                                double weightUtilization) {
-        double makespan = calculateMakespan(cloudlets);
-        double energy = calculateEnergy(hosts);
-        return evaluate(cloudlets, hosts, Math.max(1.0, makespan),
-                Math.max(1.0, energy), weightMakespan, weightEnergy, weightUtilization);
+    public double validateWeights(double weightMakespan, double weightEnergy, double weightUtilization) {
+        double total = weightMakespan + weightEnergy + weightUtilization;
+        if (Math.abs(total - 1.0) > 1.0e-9) {
+            throw new IllegalArgumentException(
+                    "Bobot objective harus berjumlah 1.0, tetapi diterima: " + total);
+        }
+        return total;
+    }
+
+    public ReferenceSet buildReferenceSet(List<Cloudlet> cloudlets, List<? extends Host> hosts) {
+        double totalWorkMi = cloudlets.stream().mapToDouble(Cloudlet::getLength).sum();
+        double hostCapacityMips = hosts.stream()
+                .mapToDouble(host -> host.getPeList().stream().mapToDouble(pe -> pe.getCapacity()).sum())
+                .sum();
+        if (totalWorkMi > 0.0 && hostCapacityMips <= 0.0) {
+            throw new IllegalArgumentException("Tidak dapat membangun reference makespan tanpa kapasitas host positif");
+        }
+        double makespanReference = totalWorkMi <= 0.0 ? 1.0 : totalWorkMi / hostCapacityMips;
+        double peakPowerWatts = hosts.stream()
+                .mapToDouble(host -> host.getPowerModel() == null ? 0.0 : host.getPowerModel().getPower(1.0))
+                .sum();
+        if (totalWorkMi > 0.0 && peakPowerWatts <= 0.0) {
+            throw new IllegalArgumentException("Tidak dapat membangun reference energi tanpa daya puncak host positif");
+        }
+        double energyReference = peakPowerWatts <= 0.0 ? 1.0 : (peakPowerWatts * makespanReference) / 3600.0;
+        return new ReferenceSet(makespanReference, energyReference);
     }
 
     public Evaluation evaluate(List<Cloudlet> cloudlets, List<? extends Host> hosts,
-                                double makespanReference, double energyReference,
-                                double weightMakespan, double weightEnergy,
-                                double weightUtilization) {
+                              double weightMakespan, double weightEnergy, double weightUtilization) {
+        ReferenceSet referenceSet = buildReferenceSet(cloudlets, hosts);
+        return evaluate(cloudlets, hosts, referenceSet.getMakespanReference(), referenceSet.getEnergyReference(),
+                weightMakespan, weightEnergy, weightUtilization);
+    }
+
+    public Evaluation evaluate(List<Cloudlet> cloudlets, List<? extends Host> hosts,
+                              double makespanReference, double energyReference,
+                              double weightMakespan, double weightEnergy,
+                              double weightUtilization) {
+        validateWeights(weightMakespan, weightEnergy, weightUtilization);
+
         double makespan = calculateMakespan(cloudlets);
         double energy = calculateEnergy(hosts);
         double utilization = calculateUtilization(hosts);
@@ -49,16 +75,15 @@ public class MultiObjectiveEvaluator {
         double normalizedMakespan = normalize(makespan, makespanReference);
         double normalizedEnergy = normalize(energy, energyReference);
         double objectiveUtilization = 1.0 - utilization;
-        double score = weightMakespan * normalizedMakespan
-                + weightEnergy * normalizedEnergy
-                + weightUtilization * objectiveUtilization;
+        double score = calculateWeightedScore(normalizedMakespan, normalizedEnergy, utilization,
+            weightMakespan, weightEnergy, weightUtilization);
 
         return new Evaluation(makespan, energy, utilization, avgWaitingTime,
                 loadBalancingDegree, slaViolations, cloudlets.size(),
-                normalizedMakespan, normalizedEnergy, score);
+                normalizedMakespan, normalizedEnergy, score, slaViolations, 0.0, 0.0, 0.0, 0.0, 0.0,
+                makespanReference, energyReference);
     }
 
-    /** Metrik 1 (Bagian 4): total waktu dari task pertama mulai sampai task terakhir selesai. */
     public double calculateMakespan(List<Cloudlet> cloudlets) {
         double firstStart = Double.MAX_VALUE;
         double lastFinish = 0.0;
@@ -73,12 +98,14 @@ public class MultiObjectiveEvaluator {
         return firstStart == Double.MAX_VALUE ? 0.0 : Math.max(0.0, lastFinish - firstStart);
     }
 
-    /** Metrik 3: rasio pemakaian PE/CPU Host, dirata-rata dari state history (butuh setStateHistoryEnabled(true)). */
     public double calculateUtilization(List<? extends Host> hosts) {
         double weightedUsage = 0.0;
         double weightedCapacity = 0.0;
         for (Host host : hosts) {
             List<HostStateHistoryEntry> history = host.getStateHistory();
+            if (history == null || history.isEmpty()) {
+                continue;
+            }
             for (int i = 1; i < history.size(); i++) {
                 HostStateHistoryEntry previous = history.get(i - 1);
                 HostStateHistoryEntry current = history.get(i);
@@ -90,15 +117,20 @@ public class MultiObjectiveEvaluator {
         return weightedCapacity == 0.0 ? 0.0 : weightedUsage / weightedCapacity;
     }
 
-    /** Metrik 2: total energi (Wh) dari power model tiap Host, diintegralkan dari state history. */
     public double calculateEnergy(List<? extends Host> hosts) {
         double energyWh = 0.0;
         for (Host host : hosts) {
             List<HostStateHistoryEntry> history = host.getStateHistory();
+            if (history == null || history.isEmpty()) {
+                continue;
+            }
             for (int i = 1; i < history.size(); i++) {
                 HostStateHistoryEntry previous = history.get(i - 1);
                 HostStateHistoryEntry current = history.get(i);
                 double durationSeconds = Math.max(0.0, current.time() - previous.time());
+                if (host.getPowerModel() == null) {
+                    continue;
+                }
                 double watts = host.getPowerModel().getPower(previous.percentUsage());
                 energyWh += watts * durationSeconds / 3600.0;
             }
@@ -106,13 +138,6 @@ public class MultiObjectiveEvaluator {
         return energyWh;
     }
 
-    /**
-     * Metrik 4: rata-rata waktu tunggu = turnaround time - actual CPU time.
-     * ASUMSI: semua task "tiba" di sistem pada t=0 (workload independen,
-     * disubmit sekaligus di awal -- Draft 1.1), jadi turnaround time == finish time.
-     * getTotalExecutionTime() (API CloudSim Plus 8.5.7; versi lama memakai nama getActualCpuTime()) menghitung total waktu EKSEKUSI NYATA,
-     * sehingga preemption DRRHA (task berhenti lalu lanjut lagi) ikut terhitung benar.
-     */
     public double calculateAverageWaitingTime(List<Cloudlet> cloudlets) {
         double totalWaiting = 0.0;
         int counted = 0;
@@ -126,12 +151,6 @@ public class MultiObjectiveEvaluator {
         return counted == 0 ? 0.0 : totalWaiting / counted;
     }
 
-    /**
-     * Metrik 5: Load Balancing Degree = koefisien variasi (stddev / mean) dari
-     * total panjang (MI) yang dieksekusi tiap VM. Nilai MENDEKATI 0 = beban
-     * makin merata antar VM (sesuai tujuan "dioptimalkan mendekati merata"
-     * di Bagian 4 draft). Indeks tanpa satuan.
-     */
     public double calculateLoadBalancingDegree(List<Cloudlet> cloudlets) {
         Map<Long, Long> workloadPerVm = new HashMap<>();
         for (Cloudlet cloudlet : cloudlets) {
@@ -151,23 +170,68 @@ public class MultiObjectiveEvaluator {
         return stddev / mean;
     }
 
-    /** Constraint 4 (Bagian 5): hitung berapa task yang melewati deadline SLA (lihat ASUMSI di atas kelas). */
     public long countSlaViolations(List<Cloudlet> cloudlets) {
-        long violations = 0;
+        long violations = 0L;
         for (Cloudlet cloudlet : cloudlets) {
-            Vm vm = cloudlet.getVm();
-            if (vm == null || cloudlet.getFinishTime() < 0 || vm.getMips() <= 0) continue;
-            double idealTime = cloudlet.getLength() / vm.getMips();
-            double deadline = SLA_FACTOR * idealTime;
-            if (cloudlet.getFinishTime() > deadline) {
-                violations++;
-            }
+            if (cloudlet != null && assessSla(cloudlet).violation()) violations++;
         }
         return violations;
     }
 
-    private double normalize(double value, double reference) {
-        return reference <= 0.0 ? 0.0 : Math.min(1.0, value / reference);
+    public SlaAssessment assessSla(Cloudlet cloudlet) {
+        Vm vm = cloudlet.getVm();
+        if (cloudlet.getStatus() == Cloudlet.Status.FAILED) {
+            return new SlaAssessment(0.0, 0.0, -1.0, 0.0, true, "FAILED");
+        }
+        if (cloudlet.getStatus() == Cloudlet.Status.CANCELED) {
+            return new SlaAssessment(0.0, 0.0, -1.0, 0.0, true, "CANCELED");
+        }
+        if (vm == null || cloudlet.getFinishTime() < 0.0 || vm.getMips() <= 0.0
+                || cloudlet.getStatus() == Cloudlet.Status.INSTANTIATED) {
+            return new SlaAssessment(0.0, 0.0, -1.0, 0.0, true, "NOT_COMPLETED_OR_UNASSIGNED");
+        }
+
+        double idealExecutionTime = Math.max(1.0, cloudlet.getLength() / vm.getMips());
+        double deadline = SLA_FACTOR * idealExecutionTime;
+        double completionTime = cloudlet.getFinishTime();
+        double lateness = Math.max(0.0, completionTime - deadline);
+        boolean violation = completionTime > deadline;
+        return new SlaAssessment(idealExecutionTime, deadline, completionTime, lateness, violation,
+                violation ? "DEADLINE_EXCEEDED" : "WITHIN_DEADLINE");
+    }
+
+    public double getSlaFactor() {
+        return SLA_FACTOR;
+    }
+
+    public double normalize(double value, double reference) {
+        if (Double.isNaN(value) || Double.isInfinite(value) || reference <= 0.0) {
+            return 0.0;
+        }
+        double normalized = value / reference;
+        return Double.isNaN(normalized) || Double.isInfinite(normalized) ? 0.0 : Math.max(0.0, normalized);
+    }
+
+    public double calculateWeightedScore(double normalizedMakespan, double normalizedEnergy,
+                                         double utilization, double weightMakespan,
+                                         double weightEnergy, double weightUtilization) {
+        validateWeights(weightMakespan, weightEnergy, weightUtilization);
+        return weightMakespan * normalizedMakespan
+                + weightEnergy * normalizedEnergy
+                + weightUtilization * (1.0 - utilization);
+    }
+
+    public static final class ReferenceSet {
+        private final double makespanReference;
+        private final double energyReference;
+
+        public ReferenceSet(double makespanReference, double energyReference) {
+            this.makespanReference = makespanReference;
+            this.energyReference = energyReference;
+        }
+
+        public double getMakespanReference() { return makespanReference; }
+        public double getEnergyReference() { return energyReference; }
     }
 
     public static final class Evaluation {
@@ -176,17 +240,26 @@ public class MultiObjectiveEvaluator {
         private final double utilization;
         private final double avgWaitingTime;
         private final double loadBalancingDegree;
-        private final long slaViolations;
+        private final double slaViolations;
         private final int totalCloudlets;
         private final double normalizedMakespan;
         private final double normalizedEnergy;
         private final double weightedScore;
+        private final double meanSlaViolations;
+        private final double slaViolationRate;
+        private final double makespanStdDev;
+        private final double energyStdDev;
+        private final double utilizationStdDev;
+        private final double avgWaitingTimeStdDev;
+        private final double slaViolationsStdDev;
+        private final double makespanReference;
+        private final double energyReference;
 
         public Evaluation(double makespan, double energyWh, double utilization,
-                           double avgWaitingTime, double loadBalancingDegree,
-                           long slaViolations, int totalCloudlets,
-                           double normalizedMakespan, double normalizedEnergy,
-                           double weightedScore) {
+                          double avgWaitingTime, double loadBalancingDegree,
+                          double slaViolations, int totalCloudlets,
+                          double normalizedMakespan, double normalizedEnergy,
+                          double weightedScore) {
             this.makespan = makespan;
             this.energyWh = energyWh;
             this.utilization = utilization;
@@ -197,6 +270,55 @@ public class MultiObjectiveEvaluator {
             this.normalizedMakespan = normalizedMakespan;
             this.normalizedEnergy = normalizedEnergy;
             this.weightedScore = weightedScore;
+            this.meanSlaViolations = slaViolations;
+            this.slaViolationRate = totalCloudlets == 0 ? 0.0 : (double) slaViolations / totalCloudlets;
+            this.makespanStdDev = 0.0;
+            this.energyStdDev = 0.0;
+            this.utilizationStdDev = 0.0;
+            this.avgWaitingTimeStdDev = 0.0;
+            this.slaViolationsStdDev = 0.0;
+            this.makespanReference = Double.NaN;
+            this.energyReference = Double.NaN;
+        }
+
+        public Evaluation(double makespan, double energyWh, double utilization,
+                          double avgWaitingTime, double loadBalancingDegree,
+                          double slaViolations, int totalCloudlets, double normalizedMakespan,
+                          double normalizedEnergy, double weightedScore, double meanSlaViolations,
+                          double makespanStdDev, double energyStdDev, double utilizationStdDev,
+                          double avgWaitingTimeStdDev, double slaViolationsStdDev) {
+                    this(makespan, energyWh, utilization, avgWaitingTime, loadBalancingDegree, slaViolations,
+                        totalCloudlets, normalizedMakespan, normalizedEnergy, weightedScore, meanSlaViolations,
+                        makespanStdDev, energyStdDev, utilizationStdDev, avgWaitingTimeStdDev,
+                        slaViolationsStdDev, Double.NaN, Double.NaN);
+                }
+
+                public Evaluation(double makespan, double energyWh, double utilization,
+                          double avgWaitingTime, double loadBalancingDegree,
+                          double slaViolations, int totalCloudlets, double normalizedMakespan,
+                          double normalizedEnergy, double weightedScore, double meanSlaViolations,
+                          double makespanStdDev, double energyStdDev, double utilizationStdDev,
+                          double avgWaitingTimeStdDev, double slaViolationsStdDev,
+                          double makespanReference, double energyReference) {
+            this.makespan = makespan;
+            this.energyWh = energyWh;
+            this.utilization = utilization;
+            this.avgWaitingTime = avgWaitingTime;
+            this.loadBalancingDegree = loadBalancingDegree;
+            this.slaViolations = slaViolations;
+            this.totalCloudlets = totalCloudlets;
+            this.normalizedMakespan = normalizedMakespan;
+            this.normalizedEnergy = normalizedEnergy;
+            this.weightedScore = weightedScore;
+            this.meanSlaViolations = meanSlaViolations;
+            this.slaViolationRate = totalCloudlets == 0 ? 0.0 : meanSlaViolations / totalCloudlets;
+            this.makespanStdDev = makespanStdDev;
+            this.energyStdDev = energyStdDev;
+            this.utilizationStdDev = utilizationStdDev;
+            this.avgWaitingTimeStdDev = avgWaitingTimeStdDev;
+            this.slaViolationsStdDev = slaViolationsStdDev;
+            this.makespanReference = makespanReference;
+            this.energyReference = energyReference;
         }
 
         public double getMakespan() { return makespan; }
@@ -204,10 +326,19 @@ public class MultiObjectiveEvaluator {
         public double getUtilization() { return utilization; }
         public double getAvgWaitingTime() { return avgWaitingTime; }
         public double getLoadBalancingDegree() { return loadBalancingDegree; }
-        public long getSlaViolations() { return slaViolations; }
+        public double getSlaViolations() { return slaViolations; }
         public int getTotalCloudlets() { return totalCloudlets; }
         public double getNormalizedMakespan() { return normalizedMakespan; }
         public double getNormalizedEnergy() { return normalizedEnergy; }
         public double getWeightedScore() { return weightedScore; }
+        public double getMeanSlaViolations() { return meanSlaViolations; }
+        public double getSlaViolationRate() { return slaViolationRate; }
+        public double getMakespanStdDev() { return makespanStdDev; }
+        public double getEnergyStdDev() { return energyStdDev; }
+        public double getUtilizationStdDev() { return utilizationStdDev; }
+        public double getAvgWaitingTimeStdDev() { return avgWaitingTimeStdDev; }
+        public double getSlaViolationsStdDev() { return slaViolationsStdDev; }
+        public double getMakespanReference() { return makespanReference; }
+        public double getEnergyReference() { return energyReference; }
     }
 }

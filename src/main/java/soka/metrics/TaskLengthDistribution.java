@@ -4,13 +4,20 @@ import org.cloudsimplus.cloudlets.Cloudlet;
 
 import java.util.List;
 
-/** Classifies task lengths around the dataset median. */
+/**
+ * Analisis panjang task (revisi poin 5): rata-rata panjang task, lalu
+ * klasifikasi SHORT (length <= rata-rata) dan LONG (length > rata-rata).
+ * Median tetap dicatat sebagai informasi tambahan.
+ */
 public final class TaskLengthDistribution {
+    private final double meanLength;
     private final double medianLength;
     private final int shortTaskCount;
     private final int longTaskCount;
 
-    private TaskLengthDistribution(double medianLength, int shortTaskCount, int longTaskCount) {
+    private TaskLengthDistribution(double meanLength, double medianLength,
+                                   int shortTaskCount, int longTaskCount) {
+        this.meanLength = meanLength;
         this.medianLength = medianLength;
         this.shortTaskCount = shortTaskCount;
         this.longTaskCount = longTaskCount;
@@ -26,30 +33,30 @@ public final class TaskLengthDistribution {
             throw new IllegalArgumentException("Dataset harus memiliki task dengan panjang positif.");
         }
 
+        double sum = 0.0;
+        for (long length : lengths) {
+            sum += length;
+        }
+        double mean = sum / lengths.length;
+
         int middle = lengths.length / 2;
         double median = lengths.length % 2 == 0
                 ? (lengths[middle - 1] / 2.0) + (lengths[middle] / 2.0)
                 : lengths[middle];
+
         int shortCount = 0;
         for (long length : lengths) {
-            if (length <= median) {
+            if (length <= mean) {
                 shortCount++;
             }
         }
-        return new TaskLengthDistribution(median, shortCount, lengths.length - shortCount);
+        return new TaskLengthDistribution(mean, median, shortCount, lengths.length - shortCount);
     }
 
-    public double getMedianLength() {
-        return medianLength;
-    }
-
-    public int getShortTaskCount() {
-        return shortTaskCount;
-    }
-
-    public int getLongTaskCount() {
-        return longTaskCount;
-    }
+    public double getMeanLength() { return meanLength; }
+    public double getMedianLength() { return medianLength; }
+    public int getShortTaskCount() { return shortTaskCount; }
+    public int getLongTaskCount() { return longTaskCount; }
 
     public double getShortTaskPercent() {
         return shortTaskCount * 100.0 / (shortTaskCount + longTaskCount);

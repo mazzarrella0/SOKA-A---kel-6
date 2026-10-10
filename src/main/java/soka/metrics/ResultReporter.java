@@ -21,10 +21,10 @@ public class ResultReporter {
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
             writer.write("makespan,energy_wh,utilization,avg_waiting_time,load_balancing_degree,"
                     + "sla_violations,total_cloudlets,normalized_makespan,normalized_energy,weighted_score,"
-                    + "median_task_length_mi,short_task_count,long_task_count,short_task_percent,long_task_percent");
+                    + "energy_kwh,mean_task_length_mi,median_task_length_mi,short_task_count,long_task_count,short_task_percent,long_task_percent");
             writer.newLine();
             writer.write(String.format(Locale.US,
-                    "%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.8f,%.1f,%d,%d,%.6f,%.6f",
+                    "%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.8f,%.9f,%.1f,%.1f,%d,%d,%.6f,%.6f",
                     evaluation.getMakespan(),
                     evaluation.getEnergyWh(),
                     evaluation.getUtilization(),
@@ -35,6 +35,8 @@ public class ResultReporter {
                     evaluation.getNormalizedMakespan(),
                     evaluation.getNormalizedEnergy(),
                     evaluation.getWeightedScore(),
+                    evaluation.getEnergyWh() / 1000.0,
+                    taskDistribution.getMeanLength(),
                     taskDistribution.getMedianLength(),
                     taskDistribution.getShortTaskCount(),
                     taskDistribution.getLongTaskCount(),

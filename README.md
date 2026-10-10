@@ -4,9 +4,9 @@
 | --- | ----------------------          | ---------- |
 | 1   | Erlangga Valdhio Putra Sulistio | 5027241030 |
 | 2   | Raihan Fahri Ghazali            | 5027241061 |
-| 3   | Ahmad Yafi Ar Rizq              | 5027241166 |
+| 3   | Ahmad Yafi Ar Rizq              | 5027241066 |
 | 2   | Aslam Ahmad Usman               | 5027241074 |
-| 3   | Az Zahrra Tasya                 | 5027241087 |
+| 3   | Az Zahrra Tasya Adelia          | 5027241087 |
 
 ## Deskripsi
 
@@ -42,19 +42,19 @@ Simulasi menggunakan satu datacenter dengan empat Host heterogen. Setiap PE memi
 
 | Host | Jumlah PE | MIPS per PE | RAM | Bandwidth | Storage |
 |---|---:|---:|---:|---:|---:|
-| Host 1 | 4 | 4000 | 8192 MB | 8000 Mbps | 500000 MB |
-| Host 2 | 8 | 4000 | 16384 MB | 8000 Mbps | 1000000 MB |
-| Host 3 | 4 | 4000 | 16384 MB | 8000 Mbps | 1000000 MB |
-| Host 4 | 8 | 4000 | 32768 MB | 8000 Mbps | 2000000 MB |
+| Host 1 | 4 | 4000 | 8192 MB | 1000 Mbps | 500000 MB |
+| Host 2 | 8 | 4000 | 16384 MB | 1000 Mbps | 1000000 MB |
+| Host 3 | 4 | 4000 | 16384 MB | 1000 Mbps | 1000000 MB |
+| Host 4 | 8 | 4000 | 32768 MB | 1000 Mbps | 2000000 MB |
 
 ## Konfigurasi Virtual Machine
 
-Terdapat delapan VM yang dibagi menjadi tiga kelompok kapasitas. Semua VM menggunakan scheduler DRRHA dan memiliki bandwidth `1000 Mbps` serta storage `10000 MB`.
+Terdapat delapan VM yang dibagi menjadi tiga kelompok kapasitas. Semua VM menggunakan scheduler DRRHA dan memiliki bandwidth `100 Mbps` serta storage `10000 MB`.
 
 | Kelompok VM | Jumlah VM | MIPS | PE | RAM |
 |---|---:|---:|---:|---:|
-| Kapasitas rendah | 2 | 1000 | 1 | 2048 MB |
-| Kapasitas menengah | 4 | 2000 | 2 | 4096 MB |
+| Kapasitas rendah | 3 | 1000 | 1 | 2048 MB |
+| Kapasitas menengah | 3 | 2000 | 2 | 4096 MB |
 | Kapasitas tinggi | 2 | 4000 | 4 | 8192 MB |
 
 ## Parameter Simulasi
@@ -62,7 +62,7 @@ Terdapat delapan VM yang dibagi menjadi tiga kelompok kapasitas. Semua VM menggu
 | Parameter | Nilai |
 |---|---|
 | Dataset yang dijalankan | 100, 200, ..., 1000, 2000, dan 3000 task |
-| Pengulangan per dataset | 2 kali; objective tiap pengulangan diverifikasi identik |
+| Pengulangan per dataset | 3 kali; objective tiap pengulangan diverifikasi identik |
 | Dataset >1000 | Dibangkitkan deterministik dengan seed 42 |
 | Kategori task pendek/panjang | Pendek: panjang <= median dataset; panjang: panjang > median |
 | PE setiap Cloudlet | 1 |
@@ -183,6 +183,71 @@ Contoh metrik agregat dari dataset 1000 task:
 Makespan menunjukkan waktu simulasi sampai task terakhir selesai. Energy consumption dihitung dari power model Host, sedangkan resource utilization menunjukkan rata-rata pemakaian CPU Host selama simulasi. Nilai utilisasi yang relatif rendah menunjukkan bahwa kapasitas resource yang tersedia lebih besar daripada beban rata-rata workload pada percobaan ini.
 
 Weighted-sum score menggabungkan makespan, energi, dan penalti utilisasi rendah menggunakan bobot `0.4`, `0.3`, dan `0.3`. Nilai ini sebaiknya digunakan untuk membandingkan beberapa algoritma dengan reference normalisasi yang sama; nilainya tidak cukup untuk menyimpulkan kualitas DRRHA jika hanya melihat satu kali percobaan.
+
+---
+# Analisis SLA Violation
+
+## 1. Definisi
+
+*SLA violation* adalah kondisi ketika sebuah task selesai **lebih lambat dari batas waktu (deadline) SLA-nya**. Definisi ini mengacu pada constraint ke-4 pada Bagian 5 Draft Design:
+
+```
+Completion_Time(task_i) ≤ Deadline_SLA(task_i)
+```
+
+Task yang tidak memenuhi syarat tersebut dikategorikan sebagai SLA violation. Draft Design tidak menetapkan nilai deadline secara eksplisit, sehingga cara penentuan deadline pada simulasi ini merupakan **asumsi desain** (parameter eksperimen).
+
+## 2. Perhitungan
+
+Untuk setiap task *i* yang dieksekusi pada VM *j*, deadline ditentukan sebagai kelipatan dari waktu eksekusi ideal task tersebut:
+
+```
+waktu_ideal(i) = length_MI(i) / MIPS(VM_j)          (1 PE per cloudlet)
+deadline(i)    = SLA_FACTOR × waktu_ideal(i)         (SLA_FACTOR = 3)
+violation(i)   = finish_time(i) > deadline(i)
+```
+
+Jumlah SLA violation adalah banyaknya task yang memenuhi kondisi `violation(i)`. Seluruh task diasumsikan masuk ke sistem pada t = 0, sehingga `finish_time` dapat dibaca langsung sebagai waktu penyelesaian task sejak masuk.
+
+Nilai `SLA_FACTOR = 3` adalah asumsi: task dianggap wajar apabila selesai dalam waktu paling lama tiga kali waktu eksekusi idealnya. Semakin besar nilainya, semakin longgar deadline.
+
+### Contoh perhitungan (dataset 1.000 task)
+
+| Task | VM | Length (MI) | Waktu ideal (s) | Deadline 3× (s) | Selesai (s) | Hasil |
+|---|---|---:|---:|---:|---:|---|
+| #3 | VM 3 (2.000 MIPS) | 81.000 | 40,5 | 121,5 | 41,7 | Memenuhi SLA |
+| #69 | VM 5 (1.000 MIPS) | 129.000 | 129,0 | 387,0 | 8.514,6 | Melanggar SLA |
+
+Task #3 berada di awal antrean VM-nya sehingga selesai hampir bersamaan dengan waktu ideal. Task #69 harus menunggu sekitar 8.385 detik, jauh melebihi batas toleransi sekitar 258 detik (2 × waktu ideal).
+
+## 3. Penyebab
+
+SLA violation yang tinggi pada simulasi ini disebabkan oleh tiga faktor yang bekerja bersamaan:
+
+1. **Seluruh task masuk sekaligus pada t = 0.** Tidak ada jeda kedatangan, sehingga semua task langsung bersaing pada antrean yang sama.
+2. **Setiap VM menjalankan satu task pada satu waktu.** Task pada urutan ke-*k* harus menunggu seluruh task di depannya selesai, sehingga waktu penyelesaiannya jauh melampaui waktu eksekusinya sendiri.
+3. **Deadline sebanding dengan panjang task itu sendiri.** Sebuah task hanya aman jika waktu tunggunya tidak lebih dari 2 × waktu ideal-nya (karena waktu tunggu + waktu eksekusi harus ≤ 3 × waktu ideal).
+
+Akibatnya, hanya task yang berada di urutan paling awal pada tiap VM yang memenuhi SLA. Pada dataset 1.000 task hanya 10 task yang memenuhi SLA (990 melanggar). Median waktu selesai task yang melanggar adalah 2.127 detik, sedangkan median deadline-nya hanya 150 detik.
+
+## 4. Pengaruh jumlah task dan algoritma
+
+**Pengaruh jumlah task.** Panjang antrean per VM tumbuh sebanding dengan jumlah task (sekitar 12 task per VM pada 100 task, 125 pada 1.000 task, dan 375 pada 3.000 task). Persentase task yang melanggar ikut meningkat:
+
+| Jumlah task | SLA violation |
+|---:|---|
+| 100 | 72–78 dari 100 |
+| 1.000 | 990 dari 1.000 |
+| 3.000 | 2.996 dari 3.000 (99,9%) |
+
+**Pengaruh algoritma.** FCFS, SJF, dan DRRHA memproses total beban kerja yang sama pada VM yang sama. Perbedaan urutan eksekusi hanya mengubah *task mana* yang melanggar, bukan *berapa banyak* yang melanggar. Pada dataset 100 task, jumlah violation FCFS 72, SJF 78, dan DRRHA 78 dari 100.
+
+## 5. Kesimpulan
+
+- Tingginya SLA violation berasal dari **pola beban (seluruh task masuk bersamaan) dan definisi deadline**, bukan semata-mata dari kekurangan algoritma scheduling yang diuji.
+- `SLA_FACTOR = 3` merupakan asumsi desain. Perubahan nilai ini akan mengubah jumlah violation, sehingga nilainya perlu dicantumkan secara eksplisit sebagai parameter eksperimen.
+- Pada skenario saat ini, metrik SLA kurang mampu membedakan kualitas antar algoritma. Perbandingan algoritma sebaiknya lebih bertumpu pada makespan, energi, utilisasi, dan waktu tunggu.
+---
 
 ## Screenshot
 

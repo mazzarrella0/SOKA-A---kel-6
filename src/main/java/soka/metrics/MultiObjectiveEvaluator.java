@@ -166,6 +166,22 @@ public class MultiObjectiveEvaluator {
         return violations;
     }
 
+    /**
+     * Hitung ulang skor F dari hasil mentah dengan referensi normalisasi BERSAMA
+     * (nilai terburuk antar semua algoritma pada dataset yang sama), sesuai
+     * Draft 3.4: M dan E dinormalisasi ke (0,1], U sudah berupa rasio 0..1.
+     */
+    public Evaluation rescore(Evaluation e, double makespanReference, double energyReference,
+                              double weightMakespan, double weightEnergy, double weightUtilization) {
+        double nm = normalize(e.getMakespan(), makespanReference);
+        double ne = normalize(e.getEnergyWh(), energyReference);
+        double score = weightMakespan * nm + weightEnergy * ne
+                + weightUtilization * (1.0 - e.getUtilization());
+        return new Evaluation(e.getMakespan(), e.getEnergyWh(), e.getUtilization(),
+                e.getAvgWaitingTime(), e.getLoadBalancingDegree(), e.getSlaViolations(),
+                e.getTotalCloudlets(), nm, ne, score);
+    }
+
     private double normalize(double value, double reference) {
         return reference <= 0.0 ? 0.0 : Math.min(1.0, value / reference);
     }

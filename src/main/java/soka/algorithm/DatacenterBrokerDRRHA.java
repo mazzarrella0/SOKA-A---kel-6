@@ -11,8 +11,11 @@ import java.util.Map;
 
 /**
  * Broker pemetaan Cloudlet -> VM dengan dua kebijakan:
- *  - ROUND_ROBIN (default DatacenterBrokerSimple): jumlah task sama rata ke tiap VM,
- *    tidak memperhatikan MIPS.
+ *  - ROUND_ROBIN (useRoundRobinMapping): task ke-i (urutan di dataset) dikirim ke VM
+ *    ke-(i mod jumlah VM) dari daftar VM yang disubmit. Jumlah task sama rata ke tiap VM,
+ *    tidak memperhatikan MIPS. Dibuat eksplisit karena default DatacenterBrokerSimple
+ *    berputar mengikuti urutan internal VM yang sudah terbuat, dan urutan itu bisa
+ *    berbeda antar run/algoritma sehingga hasil perbandingan tidak adil.
  *  - MIPS_AWARE (useMipsAwareMapping): tiap task dikirim ke VM dengan estimasi
  *    waktu selesai paling awal = busyUntil(VM) + length / MIPS(VM)
  *    (Earliest Finish Time, deterministik; seri -> VM urutan pertama).
@@ -20,6 +23,17 @@ import java.util.Map;
 public class DatacenterBrokerDRRHA extends DatacenterBrokerSimple {
     public DatacenterBrokerDRRHA(CloudSimPlus simulation) {
         super(simulation, "DRRHA-Broker");
+    }
+
+    public void useRoundRobinMapping(List<Vm> vms, List<Cloudlet> cloudlets) {
+        Map<Cloudlet, Vm> assignment = new IdentityHashMap<>();
+        for (int i = 0; i < cloudlets.size(); i++) {
+            assignment.put(cloudlets.get(i), vms.get(i % vms.size()));
+        }
+        setVmMapper(cloudlet -> {
+            Vm vm = assignment.get(cloudlet);
+            return (vm != null && vm.isCreated()) ? vm : Vm.NULL;
+        });
     }
 
     public void useMipsAwareMapping(List<Vm> candidates) {

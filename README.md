@@ -28,7 +28,7 @@ Proyek ini bertujuan untuk:
 
 Alur simulasi secara umum adalah:
 
-1. Membuat satu datacenter dengan beberapa Host heterogen.
+1. Membuat 2 datacenter identik, masing-masing 4 Host heterogen (8 Host total).
 2. Membuat delapan VM dengan kapasitas rendah, menengah, dan tinggi.
 3. Membaca panjang task dari dataset GoCJ.
 4. Mengurutkan task berdasarkan sisa panjang eksekusinya.
@@ -38,7 +38,20 @@ Alur simulasi secara umum adalah:
 
 ## Konfigurasi Infrastruktur
 
-Simulasi menggunakan satu datacenter dengan empat Host heterogen. Setiap PE memiliki kapasitas `4000 MIPS` agar dapat menampung VM dengan kapasitas tertinggi.
+Simulasi menggunakan **2 datacenter identik**, masing-masing 4 Host heterogen (spesifikasi tabel di bawah berlaku untuk tiap datacenter). Setiap PE memiliki kapasitas `4000 MIPS` agar dapat menampung VM dengan kapasitas tertinggi.
+
+Penempatan VM ke Host **tetap** (tabel `PLACEMENT` di `InfraBuilder.java`), 1 VM per Host, dan diverifikasi di akhir simulasi:
+
+| VM | Kelompok | Lokasi |
+|---|---|---|
+| VM0 | Tinggi | DC1 Host 1 |
+| VM1 | Tinggi | DC2 Host 1 |
+| VM2 | Menengah | DC1 Host 2 |
+| VM3 | Menengah | DC1 Host 3 |
+| VM4 | Menengah | DC2 Host 2 |
+| VM5 | Rendah | DC1 Host 4 |
+| VM6 | Rendah | DC2 Host 3 |
+| VM7 | Rendah | DC2 Host 4 |
 
 | Host | Jumlah PE | MIPS per PE | RAM | Bandwidth | Storage |
 |---|---:|---:|---:|---:|---:|
@@ -64,7 +77,7 @@ Terdapat delapan VM yang dibagi menjadi tiga kelompok kapasitas. Semua VM menggu
 | Dataset yang dijalankan | 100, 200, ..., 1000, 2000, dan 3000 task |
 | Pengulangan per dataset | 3 kali; objective tiap pengulangan diverifikasi identik |
 | Dataset >1000 | Dibangkitkan deterministik dengan seed 42 |
-| Kategori task pendek/panjang | Pendek: panjang <= median dataset; panjang: panjang > median |
+| Kategori task pendek/panjang | Pendek: panjang <= rata-rata dataset; panjang: panjang > rata-rata |
 | PE setiap Cloudlet | 1 |
 | Quantum DRRHA | `(Mean / 2) + ((Mean / 2) / RBT)` |
 | Urutan task | Remaining length terkecil terlebih dahulu |
@@ -85,7 +98,8 @@ Simulasi menghasilkan beberapa metrik utama:
 - **Energy Consumption**: perkiraan energi yang digunakan Host selama simulasi.
 - **Resource Utilization**: tingkat pemanfaatan CPU Host.
 - **Weighted-sum Score**: nilai gabungan dari makespan, energi, dan utilisasi.
-- **Task pendek/panjang**: jumlah serta persentase task dihitung terhadap median panjang task pada dataset yang sama.
+- **Task pendek/panjang**: jumlah serta persentase task dihitung terhadap rata-rata panjang task pada dataset yang sama.
+- **SLA violation**: jumlah task yang selesai melewati deadline (3x waktu eksekusi ideal). Penjelasan lengkap: `Penjelasan_SLA_Violation.md`.
 
 Selain itu, informasi setiap Cloudlet juga disimpan, seperti status, VM yang digunakan, waktu mulai, waktu selesai, dan waktu eksekusi.
 
@@ -93,24 +107,37 @@ Selain itu, informasi setiap Cloudlet juga disimpan, seperti status, VM yang dig
 
 ```text
 src/main/java/soka/
-├── Main.java
+├── Main.java                      orkestrasi skenario x broker x algoritma x 3 run
+├── Config.java
+├── InfraBuilder.java              2 datacenter, 8 host, penempatan VM tetap
 ├── algorithm/
 │   ├── CloudletSchedulerDRRHA.java
+│   ├── CloudletSchedulerSingleQueue.java   FCFS dan SJF (pembanding)
 │   ├── DatacenterBrokerDRRHA.java
-│   └── DRRHAEngine.java
-├── config/
-│   ├── DatacenterFactory.java
-│   └── VmFactory.java
-├── dataset/
-│   └── GoCJDatasetReader.java
-└── metrics/
-		├── MultiObjectiveEvaluator.java
-		└── ResultReporter.java
+│   ├── DRRHAEngine.java
+│   └── SchedulerFactory.java
+├── dataset/GoCJDatasetReader.java
+├── metrics/
+│   ├── MultiObjectiveEvaluator.java
+│   ├── ResultReporter.java
+│   └── TaskLengthDistribution.java
+├── prototype/StandaloneScheduler.java      prototipe di luar CloudSim (Java murni)
+└── tools/GenerateGoCJDataset.java
 
-src/main/resource/
-├── GoCJ_Dataset_500.txt
-└── GoCJ_Dataset_1000.txt
+src/main/resources/
+├── config.properties
+└── dataset/GoCJ_Dataset_<jumlah>.txt       100..1000 (interval 50/100), 2000, 3000
 ```
+
+## Prototipe di luar CloudSim
+
+`StandaloneScheduler.java` memodelkan FCFS, SJF, dan DRRHA dengan Java murni (tanpa Maven dan tanpa CloudSim) pada infrastruktur dan dataset yang sama. Dipakai untuk membuktikan logika scheduler dan sebagai pembanding silang hasil CloudSim.
+
+```powershell
+run-prototype.bat 100 1000 3000      # Linux/macOS/WSL: ./run-prototype.sh 100 1000 3000
+```
+
+Tanpa argumen, semua skenario (100-1000, 2000, 3000) dijalankan. Prototipe tidak memodelkan energi dan utilisasi Host; makespan boleh berbeda tipis dari CloudSim karena CloudSim membulatkan waktu event.
 
 ## Persyaratan
 
@@ -134,11 +161,12 @@ Run pertama mengunduh dependency (1-2 menit, tampak diam). Run berikutnya cepat.
 Hasil simulasi disimpan di folder berikut:
 
 ```text
-results/drrha-<jumlah-task>-cloudlets.csv
-results/drrha-<jumlah-task>-metrics.csv
+results/<algoritma>-<broker>-<jumlah-task>-cloudlets.csv
+results/<algoritma>-<broker>-<jumlah-task>-metrics.csv
+results/summary.csv
 ```
 
-File cloudlets berisi hasil tiap task. File metrics menyimpan objective agregat, median panjang task, serta jumlah dan persentase task pendek/panjang.
+File cloudlets berisi hasil tiap task. File metrics menyimpan objective agregat, rata-rata dan median panjang task, serta jumlah dan persentase task pendek/panjang. `results/summary.csv` merangkum semua skenario.
 
 Konfigurasi `task.counts` dan `simulation.repeat.count` di `src/main/resources/config.properties` mengatur ukuran dataset dan jumlah pengulangan. Program membandingkan makespan, energi, utilisasi, jumlah task, pelanggaran SLA, dan objective score antarrun; perbedaan akan menghentikan proses dengan pesan error.
 
@@ -240,7 +268,7 @@ Akibatnya, hanya task yang berada di urutan paling awal pada tiap VM yang memenu
 | 1.000 | 990 dari 1.000 |
 | 3.000 | 2.996 dari 3.000 (99,9%) |
 
-**Pengaruh algoritma.** FCFS, SJF, dan DRRHA memproses total beban kerja yang sama pada VM yang sama. Perbedaan urutan eksekusi hanya mengubah *task mana* yang melanggar, bukan *berapa banyak* yang melanggar. Pada dataset 100 task, jumlah violation FCFS 72, SJF 78, dan DRRHA 78 dari 100.
+**Pengaruh algoritma.** FCFS, SJF, dan DRRHA memproses total beban kerja yang sama pada VM yang sama, sehingga perbedaannya kecil, tetapi tidak nol. Pada dataset 100 task, jumlah violation FCFS 72, SJF 78, dan DRRHA 78 dari 100; pada 1.000 task, FCFS 973 dan SJF/DRRHA 990 dari 1.000. FCFS sedikit lebih rendah karena SJF/DRRHA mendahulukan task pendek, sehingga task panjang tertunda lebih lama. Selisihnya hanya beberapa persen, jadi SLA violation bukan pembeda utama antar algoritma; keunggulan DRRHA/SJF ada pada waktu tunggu rata-rata.
 
 ## 5. Kesimpulan
 

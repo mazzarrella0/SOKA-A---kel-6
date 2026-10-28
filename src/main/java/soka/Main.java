@@ -135,14 +135,14 @@ public class Main {
             DatacenterBrokerDRRHA broker = new DatacenterBrokerDRRHA(simulation);
             broker.setDatacenterMapper(infra::mapVmToDatacenter);
             List<Vm> vms = infra.buildVms();
+            List<Cloudlet> cloudlets = new GoCJDatasetReader().readScenario(numJobs);
             switch (policy) {
-                case "ROUND_ROBIN" -> { /* default broker */ }
+                case "ROUND_ROBIN" -> broker.useRoundRobinMapping(vms, cloudlets);
                 case "MIPS_AWARE" -> broker.useMipsAwareMapping(vms);
                 default -> throw new IllegalArgumentException("broker.policies tidak dikenal: " + policy
                         + " (pilihan: ROUND_ROBIN, MIPS_AWARE)");
             }
             broker.submitVmList(vms);
-            List<Cloudlet> cloudlets = new GoCJDatasetReader().readScenario(numJobs);
             broker.submitCloudletList(cloudlets);
 
             simulation.start();
